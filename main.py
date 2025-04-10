@@ -20,6 +20,10 @@ catalog = pd.DataFrame(data)
 catalog['text'] = catalog['role'] + " " + catalog['seniority'] + " " + catalog['skills'] + " " + catalog['name']
 catalog_embeddings = embedder.encode(catalog['text'].tolist(), convert_to_tensor=True)
 
+@app.route('/')
+def index():
+    return "✅ SHL API is live. Use POST /recommend to get assessment recommendations."
+
 @app.route('/recommend', methods=['POST'])
 def recommend():
     content = request.json
