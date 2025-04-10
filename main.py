@@ -1,13 +1,11 @@
 from flask import Flask, request, jsonify
 from sentence_transformers import SentenceTransformer, util
-from transformers import pipeline
 import pandas as pd
 
 app = Flask(__name__)
 
-# Load models
-embedder = SentenceTransformer('all-MiniLM-L6-v2')
-generator = pipeline("text2text-generation", model="google/flan-t5-small")
+# Load smaller embedding model for memory optimization
+embedder = SentenceTransformer('paraphrase-MiniLM-L3-v2')
 
 # SHL Product Catalog (Mock Data)
 data = [
@@ -35,27 +33,20 @@ def recommend():
     top_k = min(3, len(similarities))
     top_results = similarities.topk(k=top_k)
 
-    retrieved_info = ""
     top_assessments = []
     for score, idx in zip(top_results.values, top_results.indices):
         item = catalog.iloc[idx.item()]
-        top_assessments.append(item)
-        retrieved_info += f"- {item['name']} ({item['role']}, {item['seniority']}): {item['skills']}\n"
-
-    prompt = f"Job Description: {job_input}\n\nAvailable Assessments:\n{retrieved_info}\n\nBased on the job description and the assessments, which ones are most suitable and why?"
-    output = generator(prompt, max_length=256, do_sample=False)[0]['generated_text']
+        top_assessments.append({
+            "name": item['name'],
+            "role": item['role'],
+            "seniority": item['seniority'],
+            "skills": item['skills']
+        })
 
     return jsonify({
-        "recommendations": output,
-        "top_matches": [
-            {
-                "name": a['name'],
-                "role": a['role'],
-                "seniority": a['seniority'],
-                "skills": a['skills']
-            } for a in top_assessments
-        ]
+        "job_description": job_input,
+        "top_matches": top_assessments
     })
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=10000)
