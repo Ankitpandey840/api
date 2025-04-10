@@ -1,42 +1,61 @@
-from fastapi import FastAPI, Request
-from pydantic import BaseModel
+from flask import Flask, request, jsonify
 from sentence_transformers import SentenceTransformer, util
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
-import torch
+from transformers import pipeline
+import pandas as pd
 
-app = FastAPI()
+app = Flask(__name__)
 
-embedder = SentenceTransformer("paraphrase-MiniLM-L3-v2")
-tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-small")
-model = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-small")
+# Load models
+embedder = SentenceTransformer('all-MiniLM-L6-v2')
+generator = pipeline("text2text-generation", model="google/flan-t5-small")
 
-catalog = [
-    {"name": "Sales Potential Test", "text": "Sales Entry Communication Persuasion"},
-    {"name": "Technical Aptitude Test", "text": "Tech Entry Problem Solving Logic"},
-    {"name": "Managerial Assessment", "text": "Manager Mid Leadership Decision Making"},
-    {"name": "Coding Simulation", "text": "Tech Mid Python Coding Problem Solving"},
-    {"name": "Customer Support Test", "text": "Support Entry Empathy Communication"},
-    {"name": "Data Analysis Test", "text": "Analytics Mid Data Interpretation Excel"},
+# SHL Product Catalog (Mock Data)
+data = [
+    {"id": 1, "name": "Sales Potential Test", "role": "Sales", "seniority": "Entry", "skills": "Communication, Persuasion"},
+    {"id": 2, "name": "Technical Aptitude Test", "role": "Tech", "seniority": "Entry", "skills": "Problem Solving, Logic"},
+    {"id": 3, "name": "Managerial Assessment", "role": "Manager", "seniority": "Mid", "skills": "Leadership, Decision Making"},
+    {"id": 4, "name": "Coding Simulation", "role": "Tech", "seniority": "Mid", "skills": "Python, Coding, Problem Solving"},
+    {"id": 5, "name": "Customer Support Test", "role": "Support", "seniority": "Entry", "skills": "Empathy, Communication"},
+    {"id": 6, "name": "Data Analysis Test", "role": "Analytics", "seniority": "Mid", "skills": "Data Interpretation, Excel"},
 ]
-catalog_embeddings = embedder.encode([c["text"] for c in catalog], convert_to_tensor=True)
+catalog = pd.DataFrame(data)
+catalog['text'] = catalog['role'] + " " + catalog['seniority'] + " " + catalog['skills'] + " " + catalog['name']
+catalog_embeddings = embedder.encode(catalog['text'].tolist(), convert_to_tensor=True)
 
-class Query(BaseModel):
-    text: str
+@app.route('/recommend', methods=['POST'])
+def recommend():
+    content = request.json
+    job_input = content.get("job_description", "")
 
-@app.post("/recommend")
-async def recommend(query: Query):
-    input_embedding = embedder.encode(query.text, convert_to_tensor=True)
+    if not job_input.strip():
+        return jsonify({"error": "Job description is empty."}), 400
+
+    input_embedding = embedder.encode(job_input, convert_to_tensor=True)
     similarities = util.pytorch_cos_sim(input_embedding, catalog_embeddings)[0]
-    top_k = 3
+    top_k = min(3, len(similarities))
     top_results = similarities.topk(k=top_k)
 
-    retrieved = []
+    retrieved_info = ""
+    top_assessments = []
     for score, idx in zip(top_results.values, top_results.indices):
-        retrieved.append(catalog[idx.item()]["name"])
+        item = catalog.iloc[idx.item()]
+        top_assessments.append(item)
+        retrieved_info += f"- {item['name']} ({item['role']}, {item['seniority']}): {item['skills']}\n"
 
-    prompt = f"Job: {query.text}\nAssessments: {', '.join(retrieved)}\nWhich fits best and why?"
-    inputs = tokenizer(prompt, return_tensors="pt", max_length=512, truncation=True)
-    output_ids = model.generate(**inputs, max_length=256)
-    response_text = tokenizer.decode(output_ids[0], skip_special_tokens=True)
+    prompt = f"Job Description: {job_input}\n\nAvailable Assessments:\n{retrieved_info}\n\nBased on the job description and the assessments, which ones are most suitable and why?"
+    output = generator(prompt, max_length=256, do_sample=False)[0]['generated_text']
 
-    return {"input": query.text, "top_matches": retrieved, "recommendation": response_text}
+    return jsonify({
+        "recommendations": output,
+        "top_matches": [
+            {
+                "name": a['name'],
+                "role": a['role'],
+                "seniority": a['seniority'],
+                "skills": a['skills']
+            } for a in top_assessments
+        ]
+    })
+
+if __name__ == '__main__':
+    app.run(debug=True)
