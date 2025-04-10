@@ -1,5 +1,5 @@
-fastapi
-uvicorn
+flask
+pandas
 sentence-transformers
 transformers
 torch
